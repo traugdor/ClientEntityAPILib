@@ -6,13 +6,15 @@ using Vintagestory.Essentials;
 namespace ClientEntityAILib.Pathfinding
 {
     /// <summary>
-    /// Flying traversal: full 3D (26-directional) grid connectivity with a 3D generalization of
-    /// vanilla ground pathing's single-sample diagonal corner-cutting check. This is original
-    /// design, not a port of any vanilla algorithm - see the class remarks in the design doc
-    /// (docs/superpowers/specs/2026-09-08-3d-pathfinding-design.md) for why. Built on the same
-    /// CollisionTester/Block.GetTraversalCost primitives GroundWalkingProfile uses.
+    /// Full 3D (26-directional) grid traversal for entities that can fly and/or swim, with
+    /// per-node legality gated by MovementType and a cost bias from TerrainPreference. Original
+    /// design (not a port of any vanilla algorithm - vanilla has no flying/amphibious creature
+    /// pathfinding), built on the same CollisionTester/Block.GetTraversalCost primitives
+    /// GroundWalkingProfile uses. CanClimb has nothing to add within this grid - a pure vertical
+    /// move next to a wall is already a legal air-node move whenever CanFly is set; CanClimb only
+    /// changes GroundWalkingProfile's 8-directional graph, which has no vertical moves of its own.
     /// </summary>
-    internal class FlyingProfile : ITraversalProfile
+    internal class ThreeDMovementProfile : ITraversalProfile
     {
         private const double Center = 0.5;
 
@@ -22,9 +24,13 @@ namespace ClientEntityAILib.Pathfinding
         private readonly Vec3d tmpVec = new Vec3d();
         private readonly BlockPos tmpPos = new BlockPos(0);
         private readonly EnumAICreatureType creatureType;
+        private readonly MovementType movementType;
+        private readonly TerrainPreference terrainPreference;
 
-        public FlyingProfile(EnumAICreatureType creatureType = EnumAICreatureType.Default)
+        public ThreeDMovementProfile(MovementType movementType, TerrainPreference terrainPreference, EnumAICreatureType creatureType = EnumAICreatureType.Default)
         {
+            this.movementType = movementType;
+            this.terrainPreference = terrainPreference;
             this.creatureType = creatureType;
         }
 
@@ -67,17 +73,38 @@ namespace ClientEntityAILib.Pathfinding
             {
                 // 3D corner-cutting guard, generalizing vanilla ground pathing's own single-sample
                 // check: pull the sample point back from the destination toward the source by half
-                // a block on every axis actually being moved diagonally, and re-check for a
-                // collision there.
+                // a block on every axis actually being moved diagonally, and re-check collision.
                 tmpVec.Add(-dx / 2.0, -dy / 2.0, -dz / 2.0);
                 if (collTester.IsColliding(blockAccess, entityCollBox, tmpVec, alsoCheckTouch: false)) return false;
             }
 
             tmpPos.Set(node.X, node.Y, node.Z);
             tmpPos.dimension = node.dimension;
+
+            bool destinationIsLiquid = blockAccess.GetBlock(tmpPos, 2).IsLiquid();
+            bool destinationRestsOnGround = !destinationIsLiquid && blockAccess.IsSideSolid(node.X, node.Y - 1, node.Z, BlockFacing.UP);
+
+            bool canSwim = (movementType & MovementType.CanSwim) != 0;
+            bool canFly = (movementType & MovementType.CanFly) != 0;
+            bool canWalk = (movementType & MovementType.CanWalk) != 0;
+
+            bool legal = (destinationIsLiquid && canSwim)
+                || (!destinationIsLiquid && !destinationRestsOnGround && canFly)
+                || (destinationRestsOnGround && (canFly || canWalk));
+
+            if (!legal) return false;
+
             float cost = blockAccess.GetBlock(tmpPos, 2).GetTraversalCost(tmpPos, creatureType);
             if (cost > 10000f) return false;
             extraCost += cost;
+
+            bool multipleTerrainTypesLegal = canSwim && (canFly || canWalk);
+            if (multipleTerrainTypesLegal && terrainPreference != TerrainPreference.Both)
+            {
+                bool preferWater = terrainPreference == TerrainPreference.Water;
+                if (preferWater && !destinationIsLiquid) extraCost += 1f;
+                if (!preferWater && destinationIsLiquid) extraCost += 1f;
+            }
 
             return true;
         }
