@@ -581,7 +581,7 @@ namespace ClientEntityAILib
 
         private void SetMoving(EnumMoveTier tier)
         {
-            if (tier == currentTier) return;
+            if (entity == null || tier == currentTier) return;
             currentTier = tier;
 
             if (activeAnim != null)
