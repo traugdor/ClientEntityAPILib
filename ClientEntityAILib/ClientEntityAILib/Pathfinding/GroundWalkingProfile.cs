@@ -14,6 +14,11 @@ namespace ClientEntityAILib.Pathfinding
     /// WaypointsTraverser's "no EntityBehaviorControlledPhysics" / "no fall damage" case), since
     /// this general-purpose library has no per-entity physics data to draw from for an arbitrary
     /// spawned entity code.
+    ///
+    /// When canClimb is true, two extra vertical-only neighbors (straight up, straight down) are
+    /// available whenever the destination cell is clear and at least one horizontally-adjacent
+    /// cell is solid - something to cling to. This is original design (vanilla has no generic
+    /// climbing pathfinding to port), layered on top of the otherwise-verified ground logic.
     /// </summary>
     internal class GroundWalkingProfile : ITraversalProfile
     {
@@ -26,9 +31,11 @@ namespace ClientEntityAILib.Pathfinding
         private readonly BlockPos tmpPos = new BlockPos(0);
         private Cuboidd tmpCub = new Cuboidd();
         private readonly EnumAICreatureType creatureType;
+        private readonly bool canClimb;
 
-        public GroundWalkingProfile(EnumAICreatureType creatureType = EnumAICreatureType.Default)
+        public GroundWalkingProfile(bool canClimb = false, EnumAICreatureType creatureType = EnumAICreatureType.Default)
         {
+            this.canClimb = canClimb;
             this.creatureType = creatureType;
         }
 
@@ -38,12 +45,24 @@ namespace ClientEntityAILib.Pathfinding
             {
                 yield return new PathNode(from, Cardinal.ALL[i]);
             }
+
+            if (canClimb)
+            {
+                yield return new PathNode(new BlockPos(from.X, from.Y + 1, from.Z, from.dimension));
+                yield return new PathNode(new BlockPos(from.X, from.Y - 1, from.Z, from.dimension));
+            }
         }
 
         public bool IsTraversable(PathNode from, PathNode node, Cuboidf entityCollBox, ICachingBlockAccessor blockAccess, ref float extraCost)
         {
             int dx = node.X - from.X;
             int dz = node.Z - from.Z;
+
+            if (canClimb && dx == 0 && dz == 0 && node.Y != from.Y)
+            {
+                return IsClimbTraversable(node, entityCollBox, blockAccess);
+            }
+
             bool isDiagonal = dx != 0 && dz != 0;
 
             tmpVec.Set((double)node.X + CenterOffset, node.Y, (double)node.Z + CenterOffset);
@@ -150,6 +169,22 @@ namespace ClientEntityAILib.Pathfinding
                     return true;
                 }
             }
+            return false;
+        }
+
+        private bool IsClimbTraversable(PathNode node, Cuboidf entityCollBox, ICachingBlockAccessor blockAccess)
+        {
+            tmpVec.Set((double)node.X + CenterOffset, node.Y, (double)node.Z + CenterOffset);
+            if (collTester.IsColliding(blockAccess, entityCollBox, tmpVec, alsoCheckTouch: false)) return false;
+
+            for (int i = 0; i < BlockFacing.HORIZONTALS.Length; i++)
+            {
+                BlockFacing face = BlockFacing.HORIZONTALS[i];
+                int wallX = node.X + face.Normali.X;
+                int wallZ = node.Z + face.Normali.Z;
+                if (blockAccess.IsSideSolid(wallX, node.Y, wallZ, face.Opposite)) return true;
+            }
+
             return false;
         }
     }
