@@ -1,7 +1,8 @@
 # ClientEntityAI — design & implementation handoff
 
-Status: **not yet implemented.** This document is the complete spec for building ClientEntityAI as
-its own standalone Vintage Story mod. Everything in it is either verified against the actual
+Status: **implemented.** This document captures the verification rationale, implementation
+details, and design history behind ClientEntityAILib - for the current public API, see the top-level
+`README.md` instead. Everything in it is either verified against the actual
 shipped game files/decompiled source, or is a proven, already-working implementation pulled
 directly out of the Remedy & Ruin mod's Hallucination apparition system (`GameEngineTweaks/
 Hallucination/` in that mod) — the same trick, generalized into a reusable library instead of one
@@ -19,43 +20,8 @@ control over without writing a real server-side creature.
 
 ## Public API
 
-Exactly two public methods, both on one class, `ClientControlledEntity`. A calling mod constructs
-one instance per entity it wants to control.
-
-```csharp
-public class ClientControlledEntity
-{
-    public ClientControlledEntity(ICoreClientAPI capi);
-
-    /// <summary>
-    /// Registers and spawns a client-only entity of the given entity code at spawnPos. Returns
-    /// true if the entity type was found and the entity was created and rendered successfully;
-    /// false otherwise (bad entity code, or this instance already has an active entity - call
-    /// Despawn first to reuse the handle).
-    /// </summary>
-    public bool SpawnClient(string entityCode, Vec3d spawnPos);
-
-    /// <summary>
-    /// Moves the entity toward (x, z), following the real terrain surface vertically. If y is
-    /// given, the target is a full 3D point and the entity paths to it without moving through
-    /// terrain (walls, floors, ceilings) rather than just following the ground under a straight
-    /// line. Returns true if pathing to the destination is possible (or, for the 2D overload,
-    /// simply that an entity is active to move); false if no entity is active, or - only when y
-    /// is given - no path to the destination could be found.
-    /// </summary>
-    public bool MoveTo(double x, double z, double? y = null);
-}
-```
-
-Everything else (registering the entity type lookup, animation switching, facing, despawning) is
-internal detail the calling mod never has to touch. A `Despawn()`/`Dispose()` method is also
-needed for correct cleanup (see "Lifecycle" below) — the user's spec named only these two as the
-*driving* API, but a handle that owns a live client entity still needs a way to clean it up, so
-this document treats that as required plumbing rather than a third feature.
-
-```csharp
-public void Despawn(); // or IDisposable.Dispose() - not part of "the two", but required for cleanup
-```
+See `README.md` for the current public API surface. This document does not duplicate it, to avoid
+the two drifting out of sync with each other as the API evolves.
 
 ### Design decisions made to fill gaps in the spec
 

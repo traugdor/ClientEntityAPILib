@@ -34,6 +34,7 @@ Spawn a drifter near the player, walk it through a triangle, a square, and a cir
 it — chaining each leg via the pathfinding callback:
 
 ```csharp
+using System;
 using ClientEntityAILib;
 using ClientEntityAILib.Pathfinding;
 using Vintagestory.API.MathTools;
