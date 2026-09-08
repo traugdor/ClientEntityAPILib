@@ -728,7 +728,7 @@ namespace ClientEntityAILib
             int myGeneration = moveGeneration;
             BlockPos startPos = new BlockPos((int)Math.Floor(logicalPos.X), (int)Math.Floor(logicalPos.Y), (int)Math.Floor(logicalPos.Z), entity.Pos.Dimension);
             BlockPos targetPos = new BlockPos((int)Math.Floor(x), (int)Math.Floor(y), (int)Math.Floor(z), entity.Pos.Dimension);
-            Cuboidf entityCollBox = entity.CollisionBox;
+            Cuboidf entityCollBox = entity.CollisionBox.Clone();
             // A fresh profile instance per search call, not a shared field - GroundWalkingProfile/
             // FlyingProfile hold mutable scratch state (tmpVec/tmpPos/etc.) that isn't safe to touch
             // from two overlapping background searches at once (a superseding MoveTo call doesn't
@@ -782,12 +782,21 @@ namespace ClientEntityAILib
         {
             if (entity == null) return;
 
+            // entity (and every other bit of state a reentrant call would check) is nulled out
+            // BEFORE pendingCallback fires, since that callback is arbitrary caller code that may
+            // call back into this instance (e.g. Despawn() again, or MoveTo(...) again) - firing
+            // it while entity was still non-null let a reentrant Despawn() null it out from
+            // underneath this call, crashing on the despawn-packet-mirroring calls below once
+            // control returned here.
+            Entity entityToRemove = entity;
+            entity = null;
+            hasMoveTarget = false;
+            isMoving = false;
+            activeAnim = null;
+
             moveGeneration++;
             activeWaypoints = null;
             waypointIndex = 0;
-            Action<bool> callback = pendingCallback;
-            pendingCallback = null;
-            callback?.Invoke(false);
 
             if (tickListenerId != -1)
             {
@@ -795,17 +804,17 @@ namespace ClientEntityAILib
                 tickListenerId = -1;
             }
 
+            Action<bool> callback = pendingCallback;
+            pendingCallback = null;
+
             ClientMain game = (ClientMain)capi.World;
             EntityDespawnData despawnData = new EntityDespawnData { Reason = EnumDespawnReason.Removed };
-            game.eventManager.TriggerEntityDespawn(entity, despawnData);
-            game.RemoveEntityRenderer(entity);
-            entity.OnEntityDespawn(despawnData);
-            ((IClientWorldAccessor)capi.World).LoadedEntities.Remove(entity.EntityId);
+            game.eventManager.TriggerEntityDespawn(entityToRemove, despawnData);
+            game.RemoveEntityRenderer(entityToRemove);
+            entityToRemove.OnEntityDespawn(despawnData);
+            ((IClientWorldAccessor)capi.World).LoadedEntities.Remove(entityToRemove.EntityId);
 
-            entity = null;
-            hasMoveTarget = false;
-            isMoving = false;
-            activeAnim = null;
+            callback?.Invoke(false);
         }
 
         public void Dispose()

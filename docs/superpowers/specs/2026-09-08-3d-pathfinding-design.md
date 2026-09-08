@@ -197,9 +197,14 @@ ground search per node, so equivalent search depths take noticeably longer to re
 ## Error handling and cancellation
 
 - **Superseding calls:** see "Architecture and data flow" — generation counter, last call wins.
-- **Despawn() mid-search:** bumps `moveGeneration` and clears `activeWaypoints`; a search still
-  running on the background thread finishes normally but its result is discarded on completion
-  since nothing references the disposed entity by then.
+- **Despawn() mid-search:** bumps `moveGeneration`, clears `activeWaypoints`, and clears `entity`
+  and every other bit of instance state *before* invoking any pending callback with `false` — a
+  pending callback is arbitrary caller code and may call back into this same handle (e.g.
+  `Despawn()` or `MoveTo(...)` again); by the time it runs, the handle already looks fully
+  despawned, so a reentrant call safely no-ops via each method's own `entity == null` guard
+  instead of racing the outer `Despawn()` call's own teardown. A search still running on the
+  background thread finishes normally but its result is discarded on completion since
+  `moveGeneration` no longer matches.
 - **No path found:** `ClientAStar.FindPath` returns `null` (budget exceeded or genuinely
   unreachable — indistinguishable, matching vanilla) → `callback(false)`, entity holds position.
 - **No entity spawned:** `callback(false)` synchronously, no search started.
