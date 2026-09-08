@@ -1,13 +1,13 @@
 {
-    "type": "code",
-    "modid": "cliententityailib",
-    "name": "ClientEntityAILib",
-    "authors": [
-        "Unknown"
-    ],
-    "description": "To be added",
-    "version": "1.0.0",
-    "dependencies": {
-        "game": ""
-    }
+  "type": "code",
+  "modid": "cliententityailib",
+  "name": "ClientEntityAILib",
+  "authors": [
+    "traugdor"
+  ],
+  "description": "Vintage Story Client-only Entity AI API library. Contains functions for spawning entities and moving them on the client side, only.",
+  "version": "1.0.0",
+  "dependencies": {
+    "game": ""
+  }
 }
