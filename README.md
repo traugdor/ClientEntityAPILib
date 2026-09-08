@@ -98,6 +98,13 @@ public class ClientControlledEntity : IDisposable
     public void MoveToSlow(double x, double z, double y, Action<bool> onComplete);
     public void MoveToFast(double x, double z, double y, Action<bool> onComplete);
 
+    // Generic, entity-agnostic building blocks for a caller's own AI logic - this library has no
+    // built-in concept of "attack" or "in range"; these just play whatever animation and report
+    // whatever distance the caller asks for.
+    public bool PlayOneShotAnimation(string animationCode);
+    public Vec3d GetPosition();
+    public double DistanceTo(double x, double y, double z);
+
     public void Despawn();
 }
 
@@ -128,6 +135,14 @@ public class AnimationKeycodes
 - **`SpawnClientCustom`** works for any entity code — vanilla or a custom mod-added one — since it
   takes the animation names to use directly rather than assuming vanilla's `"idle"`/`"walk"`
   convention (which `SpawnClient` still uses as a shorthand for the common case).
+- **`PlayOneShotAnimation`/`GetPosition`/`DistanceTo`** are the entity-agnostic building blocks for
+  writing your own AI on top of this library — this library has no built-in idea of "attack" or
+  "in range." Poll `DistanceTo(x, y, z)` against whatever threshold your entity cares about, call
+  `PlayOneShotAnimation("whatever-that-entity-calls-it")` when you decide it's time, and `Despawn()`
+  on your own timer. `GetPosition()` returns the real (`logicalPos`) position, not `entity.Pos`,
+  which becomes a smoothed/lagging value once movement starts — reading `entity.Pos` directly (or
+  calling `AnimManager` yourself) would get stale answers or fight this library's own bookkeeping,
+  which is why the `Entity` object itself isn't exposed.
 
 See `docs/design-notes.md` for implementation details, verification notes against the decompiled
 game source, and known limitations.

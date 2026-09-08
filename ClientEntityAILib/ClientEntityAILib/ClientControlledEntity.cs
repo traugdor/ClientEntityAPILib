@@ -374,6 +374,67 @@ namespace ClientEntityAILib
             Despawn();
         }
 
+        /// <summary>
+        /// Plays an arbitrary, caller-defined one-shot animation (attack, eat, wave, whatever the
+        /// consuming mod decides an "action" means for this entity) - not tied to any built-in
+        /// concept of combat or interaction. Interrupts whatever movement animation is currently
+        /// active the same way SetMoving does internally, and reuses that same activeAnim
+        /// bookkeeping rather than a second parallel animation-state machine: it is automatically
+        /// stopped and replaced the next time the movement tier actually changes (idle/slow/fast),
+        /// which is when SetMoving would otherwise touch AnimManager. If the tier never changes
+        /// while this is playing (e.g. triggered mid-stride without ever stopping), it is not
+        /// self-healing - this is meant for the stop-act-resume pattern, not a mid-movement
+        /// interrupt. Returns true if an entity is active and AnimManager accepted the animation
+        /// code; false if no entity is active, animationCode is null/empty, or the code wasn't
+        /// recognized (AnimManager.StartAnimation no-ops rather than throwing, so an unrecognized
+        /// code is safe regardless of the spawned entity type).
+        /// </summary>
+        public bool PlayOneShotAnimation(string animationCode)
+        {
+            if (entity == null || string.IsNullOrEmpty(animationCode)) return false;
+
+            if (activeAnim != null)
+            {
+                entity.AnimManager.StopAnimation(activeAnim);
+                activeAnim = null;
+            }
+
+            if (entity.AnimManager.StartAnimation(animationCode))
+            {
+                activeAnim = animationCode;
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// The entity's real, ground-truth position - logicalPos, not entity.Pos, which becomes a
+        /// smoothed/lagging value once PushPosition starts feeding it into
+        /// EntityBehaviorInterpolatePosition. Returns a defensive copy (mutating it has no effect
+        /// on this handle), or null if no entity is currently spawned.
+        /// </summary>
+        public Vec3d GetPosition()
+        {
+            return logicalPos?.Clone();
+        }
+
+        /// <summary>
+        /// Straight-line distance from the entity's real (logicalPos) position to (x, y, z) - the
+        /// generic building block for a caller's own range-based decisions (attack range, flee
+        /// range, whatever threshold that entity type cares about), independent of any pathfinding
+        /// callback or fixed destination. Returns double.PositiveInfinity if no entity is spawned.
+        /// </summary>
+        public double DistanceTo(double x, double y, double z)
+        {
+            if (logicalPos == null) return double.PositiveInfinity;
+
+            double dx = logicalPos.X - x;
+            double dy = logicalPos.Y - y;
+            double dz = logicalPos.Z - z;
+            return Math.Sqrt(dx * dx + dy * dy + dz * dz);
+        }
+
         // Cancels whatever the previous MoveTo call was doing (waypoint-following or a background
         // search still in flight) without invoking its callback - per this mod's documented
         // contract, a call superseded by a newer one gets no callback at all; only despawn (see
