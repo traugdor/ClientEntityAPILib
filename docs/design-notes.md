@@ -247,8 +247,10 @@ Beyond the straight-line overloads above, `ClientControlledEntity` also exposes 
 obstacle-aware pathfinding:
 
 ```csharp
-public void MoveTo(double x, double z, Action<bool> onComplete);
-public void MoveTo(double x, double z, double y, Action<bool> onComplete);
+public void MoveToSlow(double x, double z, Action<bool> onComplete);
+public void MoveToFast(double x, double z, Action<bool> onComplete);
+public void MoveToSlow(double x, double z, double y, Action<bool> onComplete);
+public void MoveToFast(double x, double z, double y, Action<bool> onComplete);
 ```
 
 These port vanilla's own creature pathfinder (`AStar` in `VSEssentials.dll`) to run client-side -
@@ -257,8 +259,11 @@ reused as-is; only the outer search loop, which vanilla hardcodes to `ICoreServe
 The search runs on a background `Task` (never the render thread) and the result is marshaled back
 via `capi.Event.EnqueueMainThreadTask`; `onComplete` fires exactly once with `true` (reached the
 destination) or `false` (no path found within the configured node budget, no entity active, or
-despawned before arrival). A call superseded by a newer `MoveTo` call gets no callback at all -
-only the newest call's callback ever fires.
+despawned before arrival). A call superseded by a newer `MoveToSlow`/`MoveToFast` call gets no
+callback at all - only the newest call's callback ever fires. `MoveToSlow` and `MoveToFast` move at
+different actual speeds (derived per-entity by `EntitySpeedDerivation`, or the Remedy & Ruin
+fallback constants) and drive a different one of the three `AnimationKeycodes` states - see
+"Part 4: animation" below.
 
 `ClientControlledEntity`'s constructor takes a `MovementType` flags bitmask (`CanWalk`/`CanFly`/
 `CanSwim`/`CanClimb`, required) and a `TerrainPreference` (`Water`/`Land`/`Both`, default `Both`)
@@ -267,9 +272,18 @@ hard legality gate - which node types are physically possible, not a preference 
 `CanSwim`-only entity is already incapable of leaving water). `TerrainPreference` only biases cost
 when more than one terrain type is legal for that entity (e.g. `CanWalk | CanSwim`, amphibious).
 `CanFly`/`CanSwim` select the 26-directional 3D grid (roughly 3x the branching factor of ground
-pathing per node); `CanWalk`-only (optionally with `CanClimb`) stays on the 8-directional ground
-graph. See `docs/superpowers/specs/2026-09-08-usability-and-movement-features-design.md` for the
-full composition rules.
+pathing per node); whenever neither is set, the 8-directional ground graph is used regardless of
+whether `CanWalk` itself is set - `CanClimb` alone (or no flags at all) still produces a working
+ground walker, since ground-graph neighbor generation doesn't currently gate on `CanWalk`. See
+`docs/superpowers/specs/2026-09-08-usability-and-movement-features-design.md` for the full
+composition rules.
+
+`EntitySpeedDerivation`'s automatic speed lookup is effectively ground-creature-shaped: it looks
+for `"wander"`/`"seekentity"`-coded AI tasks, which is what land creatures like the drifter define.
+A flying- or swimming-tagged entity (e.g. vanilla's butterfly, whose tasks are named
+`"butterflywander"`/`"butterflychase"`) won't match those codes and will fall back to the fixed
+1.2/3.0 constants - a graceful, intentional fallback, not a bug, but worth knowing if a derived
+speed seems generic for a non-ground entity.
 
 Both use a configurable node-count search budget (`pathfindingSearchDepth`, default 4000 ground /
 8000 flying) as the bounded-computation-time mechanism - the search aborts and returns "no path"
@@ -280,27 +294,36 @@ doc comment for the full range table.
 
 ## Part 4: animation
 
-This mod cannot assume specific animation names — the concrete implementation this document is
-based on (Remedy & Ruin) hardcodes `"walk"`/`"run"`/`"idle"` and per-creature attack codes because
-it only ever spawns three known creature types. A general-purpose library controlling *arbitrary*
-entity codes can't do that safely.
+This mod cannot assume specific animation names for an arbitrary spawned entity code, so animation
+names are caller-supplied via `AnimationKeycodes` (`Idle`/`MoveSlow`/`MoveFast`), passed to
+`SpawnClientCustom`. `SpawnClient` is a thin wrapper that supplies the vanilla-convention defaults
+(`Idle = "idle"`, `MoveSlow = "walk"`, `MoveFast = "walk"`) for the common case.
+`AnimationKeycodes.MoveFast` falls back to `MoveSlow`'s code when left null/empty.
 
-**Recommended approach:** attempt the vanilla-convention codes only (`"idle"`, `"walk"`, `"run"`)
-via `entity.AnimManager.StartAnimation(code)` — this method returns `false` rather than throwing on
-an unrecognized code, so trying and silently no-op'ing on failure is safe. Document plainly that
-animation switching is **best-effort**, not guaranteed correct for arbitrary custom creatures with
-non-standard animation names (e.g. the real drifter's crawl-state remapping table is
-creature-specific and this library has no general way to discover or replicate that).
+Switching is **best-effort**: `entity.AnimManager.StartAnimation(code)` returns `false` rather than
+throwing on an unrecognized code, so a name that doesn't match the spawned entity's actual
+animations just doesn't animate for that state rather than erroring - not guaranteed correct for
+arbitrary custom creatures with non-standard animation names (e.g. the real drifter's crawl-state
+remapping table is creature-specific and this library has no general way to discover or replicate
+that).
 
 ```csharp
-private void SetMoving(bool moving)
+private void SetMoving(EnumMoveTier tier)
 {
-    if (moving == isMoving) return;
-    isMoving = moving;
-    if (activeAnim != null) { entity.AnimManager.StopAnimation(activeAnim); activeAnim = null; }
-    entity.AnimManager.StopAnimation(moving ? "idle" : "walk"); // stop whichever's live going the other way; harmless no-op if not
-    string code = moving ? "walk" : "idle";
-    if (entity.AnimManager.StartAnimation(code)) activeAnim = moving ? code : null;
+    if (entity == null || tier == currentTier) return;
+    currentTier = tier;
+
+    if (activeAnim != null)
+    {
+        entity.AnimManager.StopAnimation(activeAnim);
+        activeAnim = null;
+    }
+
+    string code = tier == EnumMoveTier.Slow ? animKeycodes.MoveSlow
+        : tier == EnumMoveTier.Fast ? animKeycodes.MoveFast
+        : animKeycodes.Idle;
+
+    if (!string.IsNullOrEmpty(code) && entity.AnimManager.StartAnimation(code)) activeAnim = code;
 }
 ```
 
@@ -316,9 +339,12 @@ private void SetMoving(bool moving)
 
 ## Known limitations (be upfront about these to consumers of this mod)
 
-- **No real collision.** These entities don't push against blocks, other entities, or the player -
-  there's no server physics tick driving that. `MoveTo` without pathfinding can walk an entity
-  into/through a wall visually.
+- **No collision against blocks, real entities, or the player.** These entities never push against
+  the world or anything outside this library - there's no server physics tick driving that. The
+  straight-line `MoveTo`/`MoveToSlow`/`MoveToFast` overloads (without a callback) can walk an
+  entity into/through a wall visually. Entities spawned by this library DO push each other apart
+  (terrain-aware, via `ApplySeparation`) - that push is the one exception, and is scoped to
+  library-owned entities only.
 - **No gravity/falling by itself.** `FindGroundY` re-grounds the entity to the nearest solid
   surface each step, which *looks* like it respects terrain, but nothing will make the entity fall
   if you stop calling `MoveTo` while it's over a ledge - it simply stays at its last logical
@@ -330,12 +356,13 @@ private void SetMoving(bool moving)
 
 ## Open research items (not solved in this document — investigate in the new session)
 
-1. ~~Real pathfinding for `MoveTo(x, z, y)`~~ - **done.** Vanilla's own `AStar`
-   (`Vintagestory.Essentials.AStar`, `VSEssentials.dll`) turned out to be pure block-graph search
-   with no server-only dependency; its supporting types are public and reused directly. See "Real
-   pathfinding: the callback-based `MoveTo` overloads" above and
-   `docs/superpowers/specs/2026-09-08-3d-pathfinding-design.md` for the full design. Swimming
-   pathfinding (a third profile) remains unimplemented - not requested yet.
+1. ~~Real pathfinding for `MoveTo(x, z, y)`~~ - **done**, including ground, flying, and swimming.
+   Vanilla's own `AStar` (`Vintagestory.Essentials.AStar`, `VSEssentials.dll`) turned out to be pure
+   block-graph search with no server-only dependency; its supporting types are public and reused
+   directly. See "Real pathfinding: the callback-based `MoveTo` overloads" above,
+   `docs/superpowers/specs/2026-09-08-3d-pathfinding-design.md` for the ground/flying design, and
+   `docs/superpowers/specs/2026-09-08-usability-and-movement-features-design.md` for how swimming
+   and the composable `MovementType`/`TerrainPreference` capability model were added on top.
 2. **Rock-throw / ranged-attack style effects**, if a future consumer of this mod wants them (this
    came up in Remedy & Ruin's own drifter behavior). The real server task (`AiTaskShootAtEntityR` /
    the older `throwatentity` it evolved from) spawns a real, server-physics-ticked projectile
