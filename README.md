@@ -275,14 +275,40 @@ does **not** avoid obstacles (walls, cliffs it can't climb) — it will walk fac
 and keep trying. Always returns `true` once an entity is active (there's no reachability check in
 this overload — see the next section for why).
 
-### The `MoveTo(x, z, y)` overload — real pathfinding, NOT YET DESIGNED HERE
+### Real pathfinding: the callback-based `MoveTo` overloads
 
-This is the one place where this document does **not** hand over a proven implementation, because
-none exists yet anywhere in this project. "Paths to it without moving through terrain" requires
-genuine obstacle-aware pathfinding (walls, ceilings, drops), which the straight-line + terrain-
-follow technique above does not provide. See "Open research items" below — this needs to be solved
-before `MoveTo`'s 3-argument overload can honestly return `false` for an unreachable point rather
-than just walking into a wall and stalling.
+Beyond the straight-line overloads above, `ClientControlledEntity` also exposes real,
+obstacle-aware pathfinding:
+
+```csharp
+public void MoveTo(double x, double z, Action<bool> onComplete);
+public void MoveTo(double x, double z, double y, Action<bool> onComplete);
+```
+
+These port vanilla's own creature pathfinder (`AStar` in `VSEssentials.dll`) to run client-side -
+its supporting types (`PathNode`, `PathNodeSet`, `Cardinal`, `CollisionTester`) are public and
+reused as-is; only the outer search loop, which vanilla hardcodes to `ICoreServerAPI`, is ported.
+The search runs on a background `Task` (never the render thread) and the result is marshaled back
+via `capi.Event.EnqueueMainThreadTask`; `onComplete` fires exactly once with `true` (reached the
+destination) or `false` (no path found within the configured node budget, no entity active,
+despawned before arrival, or superseded by a newer `MoveTo` call).
+
+`ClientControlledEntity`'s constructor takes an `isFlying` flag (default `false`) that selects the
+whole handle's traversal profile for these overloads:
+
+- **Ground** (`isFlying: false`) - 8-directional, ported verbatim from vanilla's own
+  `AStar.traversable()` (step-height/fall-height handling, liquid costs, diagonal corner-cutting).
+- **Flying** (`isFlying: true`) - 26-directional (full 3D grid connectivity). Vanilla has no flying
+  creature type to port from, so this is original design built on the same proven
+  `CollisionTester`/`Block.GetTraversalCost` primitives ground pathing uses, generalized to 3D
+  (including a 3D corner-cutting guard). Roughly 3x the branching factor per node versus ground.
+
+Both use a configurable node-count search budget (`pathfindingSearchDepth`, default 4000 ground /
+8000 flying) as the bounded-computation-time mechanism - the search aborts and returns "no path"
+once the budget is exceeded, exactly like vanilla's own algorithm. Each node is roughly one
+block-step; in open terrain that's close to 1:1 with real range, but obstacles, elevation changes,
+and dead-ends multiply nodes explored well past the direct-line distance. See the constructor's XML
+doc comment for the full range table.
 
 ## Part 4: animation
 
@@ -336,18 +362,12 @@ private void SetMoving(bool moving)
 
 ## Open research items (not solved in this document — investigate in the new session)
 
-1. **Real pathfinding for `MoveTo(x, z, y)`.** Two candidate directions, neither verified yet:
-   - **Build a self-contained client-safe pathfinder** (e.g. A*/BFS over a walkable-cell graph,
-     testing candidate cells with the same `IsSideSolid` technique `FindGroundY` uses). Pure block
-     reads, no server-only systems involved, so this is guaranteed safe to run client-side - the
-     open question is just the algorithm/performance work, not feasibility.
-   - **Investigate reusing vanilla's own pathfinding code** (`Entity/Pathfinding` in the decompiled
-     `vsessentialsmod` source tree, e.g. `AiTaskGotoEntity` and whatever navigation graph solver it
-     calls into). This is normally invoked only from server-side AI tasks; it is **not yet verified**
-     whether its core solver has any dependency on server-only ticking/physics or whether it's pure
-     graph-search math that could be called directly from client code. Check this before assuming
-     it's reusable — if it turns out to depend on server-only state, the self-built option above is
-     the fallback.
+1. ~~Real pathfinding for `MoveTo(x, z, y)`~~ - **done.** Vanilla's own `AStar`
+   (`Vintagestory.Essentials.AStar`, `VSEssentials.dll`) turned out to be pure block-graph search
+   with no server-only dependency; its supporting types are public and reused directly. See "Real
+   pathfinding: the callback-based `MoveTo` overloads" above and
+   `docs/superpowers/specs/2026-09-08-3d-pathfinding-design.md` for the full design. Swimming
+   pathfinding (a third profile) remains unimplemented - not requested yet.
 2. **Rock-throw / ranged-attack style effects**, if a future consumer of this mod wants them (this
    came up in Remedy & Ruin's own drifter behavior). The real server task (`AiTaskShootAtEntityR` /
    the older `throwatentity` it evolved from) spawns a real, server-physics-ticked projectile
