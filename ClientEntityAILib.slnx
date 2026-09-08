@@ -1,0 +1,4 @@
+<Solution>
+  <Project Path="ClientEntityAILib/ClientEntityAILib/ClientEntityAILib.csproj" />
+  <Project Path="ClientEntityAILib/ZZCakeBuild/CakeBuild.csproj" />
+</Solution>
