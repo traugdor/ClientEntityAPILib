@@ -9,13 +9,16 @@ namespace ClientEntityAILib.Pathfinding
     /// <summary>
     /// Ground-walking traversal: the 8 horizontal Cardinal directions, with per-step vertical
     /// step-up/fall-down handling. Ported from vanilla's own AStar.traversable()
-    /// (Vintagestory.Essentials.AStar, VSEssentials.dll) - the same rules real land creatures path
-    /// with server-side, verified against the decompiled source.
+    /// (Vintagestory.Essentials.AStar, VSEssentials.dll) - verified against the decompiled source.
+    /// StepHeight/MaxFallHeight use vanilla's own generic fallback defaults (0.6 / 8, from
+    /// WaypointsTraverser's "no EntityBehaviorControlledPhysics" / "no fall damage" case), since
+    /// this general-purpose library has no per-entity physics data to draw from for an arbitrary
+    /// spawned entity code.
     /// </summary>
     internal class GroundWalkingProfile : ITraversalProfile
     {
-        private const float StepHeight = 1f;
-        private const int MaxFallHeight = 3;
+        private const float StepHeight = 0.6f;
+        private const int MaxFallHeight = 8;
         private const double CenterOffset = 0.5;
 
         private readonly CollisionTester collTester = new CollisionTester();
