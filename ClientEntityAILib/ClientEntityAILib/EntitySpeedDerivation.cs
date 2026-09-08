@@ -16,6 +16,10 @@ namespace ClientEntityAILib
         public static (double slowSpeed, double fastSpeed) Derive(EntityProperties props)
         {
             double groundDragFactor = DeriveGroundDragFactor(props);
+            if (groundDragFactor <= 0.0)
+            {
+                return (FallbackSlowSpeed, FallbackFastSpeed);
+            }
 
             double? slowMoveSpeed = FindTaskMoveSpeed(props, SlowTaskCode);
             double? fastMoveSpeed = FindTaskMoveSpeed(props, FastTaskCode);
@@ -33,6 +37,15 @@ namespace ClientEntityAILib
             return 0.3 * multiplier;
         }
 
+        /// <summary>
+        /// Vanilla's own creature "movespeed" isn't a blocks/sec figure - it's fed into
+        /// Controls.WalkVector, which the server's per-tick physics module (PModuleOnGround.DoApply)
+        /// converts into real velocity through a damped exponential-approach recurrence whose
+        /// steady state is walkX * groundDrag / (1 - groundDrag). Position updates then use
+        /// dtFactor = dt * 60 (EntityBehaviorControlledPhysics), not dt directly, so the real rate
+        /// is that steady state times 60. groundDragFactor's 0.3 base matches PModuleOnGround's own
+        /// default.
+        /// </summary>
         private static double ToBlocksPerSecond(double moveSpeed, double groundDragFactor)
         {
             return moveSpeed * 60.0 * (1.0 - groundDragFactor) / groundDragFactor;
