@@ -121,6 +121,10 @@ public class AnimationKeycodes
   exists; `Both` (the default) is unbiased.
 - **Speeds** for `MoveToSlow`/`MoveToFast` are derived automatically from the spawned entity's own
   AI-task JSON where present, falling back to fixed defaults otherwise — no configuration needed.
+  If the entity's JSON has no matching `wander`/`seekentity` movement tasks to derive a speed from
+  (a minimal custom entity, for example), both tiers fall back to fixed constants (1.2 / 3.0
+  blocks/sec) taken from Remedy & Ruin's own shipped, hand-tuned drifter apparition behavior —
+  proven-good values, not the derived speed of vanilla's actual drifter.
 - **`SpawnClientCustom`** works for any entity code — vanilla or a custom mod-added one — since it
   takes the animation names to use directly rather than assuming vanilla's `"idle"`/`"walk"`
   convention (which `SpawnClient` still uses as a shorthand for the common case).
