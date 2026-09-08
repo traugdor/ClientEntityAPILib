@@ -92,13 +92,16 @@ namespace ClientEntityAILib.Pathfinding
     /// <summary>
     /// Ground-walking traversal: the 8 horizontal Cardinal directions, with per-step vertical
     /// step-up/fall-down handling. Ported from vanilla's own AStar.traversable()
-    /// (Vintagestory.Essentials.AStar, VSEssentials.dll) - the same rules real land creatures path
-    /// with server-side, verified against the decompiled source.
+    /// (Vintagestory.Essentials.AStar, VSEssentials.dll) - verified against the decompiled source.
+    /// StepHeight/MaxFallHeight use vanilla's own generic fallback defaults (0.6 / 8, from
+    /// WaypointsTraverser's "no EntityBehaviorControlledPhysics" / "no fall damage" case), since
+    /// this general-purpose library has no per-entity physics data to draw from for an arbitrary
+    /// spawned entity code.
     /// </summary>
     internal class GroundWalkingProfile : ITraversalProfile
     {
-        private const float StepHeight = 1f;
-        private const int MaxFallHeight = 3;
+        private const float StepHeight = 0.6f;
+        private const int MaxFallHeight = 8;
         private const double CenterOffset = 0.5;
 
         private readonly CollisionTester collTester = new CollisionTester();
@@ -583,7 +586,6 @@ namespace ClientEntityAILib
         private readonly ICoreClientAPI capi;
         private readonly bool isFlying;
         private readonly int pathfindingSearchDepth;
-        private readonly ITraversalProfile traversalProfile;
 
         private Entity entity;
         private Vec3d logicalPos;
@@ -623,7 +625,6 @@ namespace ClientEntityAILib
             this.capi = capi;
             this.isFlying = isFlying;
             this.pathfindingSearchDepth = pathfindingSearchDepth ?? (isFlying ? 8000 : 4000);
-            this.traversalProfile = isFlying ? (ITraversalProfile)new FlyingProfile() : new GroundWalkingProfile();
 
             if (isFlying)
             {
@@ -728,7 +729,11 @@ namespace ClientEntityAILib
             BlockPos startPos = new BlockPos((int)Math.Floor(logicalPos.X), (int)Math.Floor(logicalPos.Y), (int)Math.Floor(logicalPos.Z), entity.Pos.Dimension);
             BlockPos targetPos = new BlockPos((int)Math.Floor(x), (int)Math.Floor(y), (int)Math.Floor(z), entity.Pos.Dimension);
             Cuboidf entityCollBox = entity.CollisionBox;
-            ITraversalProfile profile = traversalProfile;
+            // A fresh profile instance per search call, not a shared field - GroundWalkingProfile/
+            // FlyingProfile hold mutable scratch state (tmpVec/tmpPos/etc.) that isn't safe to touch
+            // from two overlapping background searches at once (a superseding MoveTo call doesn't
+            // cancel the previous search, it just discards its result later - see CancelPendingPathfind).
+            ITraversalProfile profile = isFlying ? (ITraversalProfile)new FlyingProfile() : new GroundWalkingProfile();
             int searchDepth = pathfindingSearchDepth;
 
             Task.Run(() =>
