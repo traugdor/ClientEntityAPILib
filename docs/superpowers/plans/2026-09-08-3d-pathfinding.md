@@ -1036,8 +1036,9 @@ its supporting types (`PathNode`, `PathNodeSet`, `Cardinal`, `CollisionTester`) 
 reused as-is; only the outer search loop, which vanilla hardcodes to `ICoreServerAPI`, is ported.
 The search runs on a background `Task` (never the render thread) and the result is marshaled back
 via `capi.Event.EnqueueMainThreadTask`; `onComplete` fires exactly once with `true` (reached the
-destination) or `false` (no path found within the configured node budget, no entity active,
-despawned before arrival, or superseded by a newer `MoveTo` call).
+destination) or `false` (no path found within the configured node budget, no entity active, or
+despawned before arrival). A call superseded by a newer `MoveTo` call gets no callback at all -
+only the newest call's callback ever fires.
 
 `ClientControlledEntity`'s constructor takes an `isFlying` flag (default `false`) that selects the
 whole handle's traversal profile for these overloads:
