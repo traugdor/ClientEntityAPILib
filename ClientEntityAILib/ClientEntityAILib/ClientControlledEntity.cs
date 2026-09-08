@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading.Tasks;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
@@ -44,7 +45,7 @@ namespace ClientEntityAILib
         private float pushAccum;
         private long tickListenerId = -1;
 
-        private System.Collections.Generic.List<Vec3d> activeWaypoints;
+        private List<Vec3d> activeWaypoints;
         private int waypointIndex;
         private Action<bool> pendingCallback;
         private int moveGeneration;
@@ -198,7 +199,7 @@ namespace ClientEntityAILib
                 }
             }).ContinueWith(task =>
             {
-                System.Collections.Generic.List<Vec3d> waypoints = null;
+                List<Vec3d> waypoints = null;
                 if (task.Status == TaskStatus.RanToCompletion)
                 {
                     waypoints = task.Result;
