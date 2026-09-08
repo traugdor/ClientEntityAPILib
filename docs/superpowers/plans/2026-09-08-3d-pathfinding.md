@@ -505,10 +505,11 @@ namespace ClientEntityAILib.Pathfinding
             return path;
         }
 
-        // NOTE: unlike vanilla's own ToWaypoints (which skips path[0] - see the design doc's
-        // "Verified starting point" section for why that's a deliberate deviation, not an oversight),
-        // this includes every step, since the caller here is this mod's own waypoint-following
-        // mover rather than vanilla's WaypointsTraverser, and has no equivalent assumption to rely on.
+        // NOTE: unlike vanilla's own ToWaypoints, which skips path[0], this includes every step -
+        // path[0] is already the first real step away from start (RetracePath never puts the start
+        // node itself into the array), and the caller here is this mod's own waypoint-following
+        // mover rather than vanilla's WaypointsTraverser, which has no equivalent assumption to skip
+        // the first entry for.
         private List<Vec3d> ToWaypoints(List<PathNode> path)
         {
             double offsetX = 0.3 + rand.NextDouble() * 0.4;
