@@ -381,6 +381,71 @@ namespace ClientEntityAILib
         }
 
         /// <summary>
+        /// Plays a one-shot sound anchored to the entity's own position and facing (relativeToEntity:
+        /// true, default) or the player's (false), using the engine's own real 3D positional audio -
+        /// no custom spatialization, just computing the right world position to hand it. direction is
+        /// a fixed 45-degree-step angle offset from "straight ahead" relative to whichever facing
+        /// applies (Front = 0, FrontRight = 45, ... FrontLeft = 315, going clockwise); distance
+        /// projects a world-space offset out along the resulting combined angle. distance: 0 (the
+        /// default) means no offset at all regardless of direction - the sound plays exactly at the
+        /// anchor position. heightOffset is added straight to Y, no rotation involved.
+        /// Returns true if a sound was found at soundLocation and started playing; false if no entity
+        /// is spawned, soundLocation is null/empty, or the sound wasn't found.
+        /// </summary>
+        public bool PlaySound(string soundLocation, bool relativeToEntity = true, SoundDirection direction = SoundDirection.Front, double distance = 0, double heightOffset = 0, bool randomizePitch = true, float range = 32f, float volume = 1f)
+        {
+            if (entity == null || string.IsNullOrEmpty(soundLocation)) return false;
+
+            Vec3d anchorPos;
+            float anchorYaw;
+            int dimension;
+
+            if (relativeToEntity)
+            {
+                anchorPos = logicalPos;
+                anchorYaw = entity.Pos.Yaw;
+                dimension = entity.Pos.Dimension;
+            }
+            else
+            {
+                EntityPos playerPos = capi.World.Player.Entity.Pos;
+                anchorPos = playerPos.XYZ;
+                anchorYaw = playerPos.Yaw;
+                dimension = playerPos.Dimension;
+            }
+
+            float combinedYaw = anchorYaw + DirectionAngle(direction);
+            double worldX = anchorPos.X + Math.Sin(combinedYaw) * distance;
+            double worldY = anchorPos.Y + heightOffset;
+            double worldZ = anchorPos.Z + Math.Cos(combinedYaw) * distance;
+
+            SoundAttributes sound = new SoundAttributes(new AssetLocation(soundLocation), randomizePitch)
+            {
+                Range = range,
+                Volume = NatFloat.createUniform(volume, 0f)
+            };
+
+            int durationMs = capi.World.PlaySoundAt(sound, worldX, worldY, worldZ, dimension);
+            return durationMs > 0;
+        }
+
+        private static float DirectionAngle(SoundDirection direction)
+        {
+            return direction switch
+            {
+                SoundDirection.Front => 0f,
+                SoundDirection.FrontRight => GameMath.PIHALF / 2f,
+                SoundDirection.Right => GameMath.PIHALF,
+                SoundDirection.BackRight => GameMath.PIHALF + GameMath.PIHALF / 2f,
+                SoundDirection.Back => GameMath.PI,
+                SoundDirection.BackLeft => -(GameMath.PIHALF + GameMath.PIHALF / 2f),
+                SoundDirection.Left => -GameMath.PIHALF,
+                SoundDirection.FrontLeft => -(GameMath.PIHALF / 2f),
+                _ => 0f
+            };
+        }
+
+        /// <summary>
         /// The entity's real, ground-truth position - logicalPos, not entity.Pos, which becomes a
         /// smoothed/lagging value once PushPosition starts feeding it into
         /// EntityBehaviorInterpolatePosition. Returns a defensive copy (mutating it has no effect

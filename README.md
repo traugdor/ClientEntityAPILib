@@ -99,6 +99,7 @@ public class ClientControlledEntity : IDisposable
     public bool PlayOneShotAnimation(string animationCode);
     public Vec3d GetPosition();
     public double DistanceTo(double x, double y, double z);
+    public bool PlaySound(string soundLocation, bool relativeToEntity = true, SoundDirection direction = SoundDirection.Front, double distance = 0, double heightOffset = 0, bool randomizePitch = true, float range = 32f, float volume = 1f);
 
     public void Despawn();
 }
@@ -106,6 +107,7 @@ public class ClientControlledEntity : IDisposable
 [Flags]
 public enum MovementType { CanWalk = 1, CanFly = 2, CanSwim = 4, CanClimb = 8 }
 public enum TerrainPreference { Water, Land, Both }
+public enum SoundDirection { Front, FrontRight, Right, BackRight, Back, BackLeft, Left, FrontLeft }
 
 public class AnimationKeycodes
 {
@@ -142,6 +144,14 @@ public class AnimationKeycodes
   `client.animations` code (many don't — e.g. the real drifter's `"standattack"` is only ever
   played by its own AI task constructing the animation data directly, the same fallback this
   method uses).
+- **`PlaySound`** plays a one-shot sound using the engine's own real 3D positional audio — no
+  custom panning trick, just computing the right world position and letting the engine's audio
+  listener do the rest. `relativeToEntity: true` (the default) anchors it to the entity's own
+  position and facing; `false` anchors it to the player's instead. `direction`/`distance` offset
+  it from that anchor along a fixed 45°-step angle relative to whichever facing applies — e.g.
+  `PlaySound("game:creature/drifter/hurt", relativeToEntity: false, direction: SoundDirection.Back, distance: 5)`
+  plays a sound 5 blocks behind wherever the player is currently facing, regardless of where the
+  entity actually is. `distance: 0` (the default) means no offset at all — just play at the anchor.
 
 See `docs/design-notes.md` for implementation details, verification notes against the decompiled
 game source, and known limitations.

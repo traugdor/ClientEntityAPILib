@@ -312,6 +312,30 @@ private void SetMoving(EnumMoveTier tier)
 }
 ```
 
+## Part 5: directional sound
+
+`PlaySound` uses the engine's own real 3D positional audio (`IWorldAccessor.PlaySoundAt`,
+verified on the decompiled source - declared on the shared `IWorldAccessor` interface, same as
+every other engine call this library makes through `capi.World`) rather than any custom panning
+trick. The only work this method does is compute the right world position and hand it off; the
+engine's audio listener handles distance attenuation and direction relative to the player
+automatically once given that position.
+
+The `int`-returning overload (`PlaySoundAt(SoundAttributes, x, y, z, dimension, ...)`), not the
+`void` `AssetLocation`-based one, is what's actually called - the `void` overload gives no signal
+whether the sound was found, and `PlaySound`'s own documented contract (`false` if the sound
+wasn't found) needs that signal. `SoundAttributes.Volume` is a `NatFloat` (a distribution, not a
+plain float) - `NatFloat.createUniform(volume, 0f)` (zero variance) is what gives an exact,
+non-random value matching the `volume` parameter.
+
+`direction`/`distance` rotate a world-space offset by whichever facing applies (the entity's own
+`Yaw`, or the player's), using the same `Atan2(X, Z)` yaw convention already verified and used
+throughout this library's movement code - `Math.Sin(combinedYaw)` for the X component,
+`Math.Cos(combinedYaw)` for Z, matching how movement code derives a forward vector from a yaw.
+Each `SoundDirection` value is a fixed 45°-step angle added to that yaw before projecting the
+offset out; `GameMath.PIHALF`/`GameMath.PI` (`Vintagestory.API.MathTools`) are the real, verified
+constants used for those steps, not hand-rolled numeric literals.
+
 ## Lifecycle
 
 - One `ClientControlledEntity` = one live client entity at a time. `SpawnClient` fails (`false`)
