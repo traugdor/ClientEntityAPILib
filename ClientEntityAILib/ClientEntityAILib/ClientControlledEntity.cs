@@ -37,6 +37,10 @@ namespace ClientEntityAILib
         private const float DriftCheckInterval = 1f;
         private const double DriftThreshold = 1.5;
 
+        // Matches GroundWalkingProfile's own vanilla-verified StepHeight default. Caps how much a
+        // single StepDirectTarget tick's FindGroundY result may rise above the previous tick's Y.
+        private const double StepUpHeightLimit = 0.6;
+
         private readonly ICoreClientAPI capi;
         private readonly MovementType movementType;
         private readonly TerrainPreference terrainPreference;
@@ -511,11 +515,32 @@ namespace ClientEntityAILib
             }
 
             double step = Math.Min(currentMoveSpeed * dt, dist);
-            logicalPos.X += toTarget.X / dist * step;
-            logicalPos.Z += toTarget.Z / dist * step;
-            logicalPos.Y = FindGroundY(capi, logicalPos.X, logicalPos.Y, logicalPos.Z);
+            double candidateX = logicalPos.X + toTarget.X / dist * step;
+            double candidateZ = logicalPos.Z + toTarget.Z / dist * step;
+            double candidateY = FindGroundY(capi, candidateX, logicalPos.Y, candidateZ);
 
             yaw = (float)Math.Atan2(toTarget.X, toTarget.Z);
+
+            // Never step up more than StepUpHeightLimit in a single tick. FindGroundY's own "allow
+            // stepping up slightly" margin is meant for natural single-step terrain (stairs, small
+            // ledges) - but since it's called every tick with the previous tick's own Y fed back as
+            // the next anchor, nothing otherwise stops that margin from reapplying tick after tick,
+            // letting an unobstructed straight-line walk ratchet up an arbitrarily tall wall one
+            // step-height at a time. Falling (a lower candidateY) is always allowed - only an
+            // excessive rise is refused, holding position (still facing/animating toward the
+            // target) rather than climbing.
+            if (candidateY - logicalPos.Y > StepUpHeightLimit)
+            {
+                if (entity is EntityAgent blockedAgent)
+                {
+                    blockedAgent.Controls.WalkVector.Set(toTarget.X / dist * currentMoveSpeed, 0, toTarget.Z / dist * currentMoveSpeed);
+                }
+                return true;
+            }
+
+            logicalPos.X = candidateX;
+            logicalPos.Z = candidateZ;
+            logicalPos.Y = candidateY;
 
             if (entity is EntityAgent agent)
             {

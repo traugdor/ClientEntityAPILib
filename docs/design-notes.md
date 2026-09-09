@@ -342,9 +342,14 @@ private void SetMoving(EnumMoveTier tier)
 - **No collision against blocks, real entities, or the player.** These entities never push against
   the world or anything outside this library - there's no server physics tick driving that. The
   straight-line `MoveTo`/`MoveToSlow`/`MoveToFast` overloads (without a callback) can walk an
-  entity into/through a wall visually. Entities spawned by this library DO push each other apart
-  (terrain-aware, via `ApplySeparation`) - that push is the one exception, and is scoped to
-  library-owned entities only.
+  entity horizontally into/through a wall visually - there is no horizontal collision check, at
+  any `MovementType`. Vertically, `StepDirectTarget` caps how much a single tick's re-grounding
+  (`FindGroundY`) may rise above the previous tick, so it can't ratchet up an arbitrarily tall
+  wall one step-height at a time the way it could before that cap existed; a normal single-step
+  rise (stairs, small ledges) still works. `MovementType.CanClimb` is not consulted by these
+  overloads at all - it only gates the real pathfinding profiles' vertical-wall-cling neighbors.
+  Entities spawned by this library DO push each other apart (terrain-aware, via `ApplySeparation`)
+  - that push is the one exception, and is scoped to library-owned entities only.
 - **No gravity/falling by itself.** `FindGroundY` re-grounds the entity to the nearest solid
   surface each step, which *looks* like it respects terrain, but nothing will make the entity fall
   if you stop calling `MoveTo` while it's over a ledge - it simply stays at its last logical
