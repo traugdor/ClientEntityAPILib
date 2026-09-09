@@ -6,7 +6,7 @@
     "traugdor"
   ],
   "description": "Client-side Entity AI API library for Vintage Story. Provides functions for spawning and moving decorative entities entirely on the client.",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "side": "client",
   "dependencies": {
     "game": ""
