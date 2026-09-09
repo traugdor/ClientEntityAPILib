@@ -208,43 +208,28 @@ internal static double FindGroundY(ICoreClientAPI capi, double x, double aroundY
 Call this every step, anchored at the entity's own current logical Y (not the sky, not a fixed
 spawn height) — this is what makes it work correctly both outdoors on hills and underground/indoors.
 
-### Putting a movement step together
+### `FindGroundY` today: resolving a target Y for pathfinding
 
-```csharp
-Vec3d toTarget = new Vec3d(targetX - logicalPos.X, 0, targetZ - logicalPos.Z); // horizontal only
-double dist = toTarget.Length();
-float desiredYaw = dist > 0.01 ? (float)Math.Atan2(toTarget.X, toTarget.Z) : entity.Pos.Yaw;
+An earlier version of this mod also had synchronous, non-pathfinding `MoveTo`/`MoveToSlow`/
+`MoveToFast` overloads that walked a straight line toward (x, z), re-deriving Y via `FindGroundY`
+every tick. They were removed - having no obstacle avoidance at all (no horizontal collision check
+ever existed for them), and `FindGroundY`'s own per-tick re-grounding had no cap on consecutive
+step-ups, they could silently climb over an arbitrarily tall wall one step-height at a time,
+regardless of `MovementType.CanClimb` (which they never consulted anyway - that flag only ever
+gated the real pathfinding profiles' neighbor generation). Real, obstacle-aware pathfinding
+(below) was already the correct tool for "walk to a point I don't already know is reachable"; the
+straight-line overloads added a second, easily-mispicked way to do the same thing that quietly
+broke in exactly the case it looked safest.
 
-if (dist > 0.01)
-{
-    double step = Math.Min(speed * dt, dist);
-    logicalPos.X += toTarget.X / dist * step;
-    logicalPos.Z += toTarget.Z / dist * step;
-    logicalPos.Y = FindGroundY(capi, logicalPos.X, logicalPos.Y, logicalPos.Z);
-
-    if (entity is EntityAgent agent)
-        agent.Controls.WalkVector.Set(toTarget.X / dist * speed, 0, toTarget.Z / dist * speed);
-}
-
-// push logicalPos + desiredYaw through OnReceivedServerPos, throttled to ~15/sec (see above)
-```
-
-**Important:** `toTarget` must stay horizontal (Y = 0) here. If Y is left non-zero, `dist` becomes
-a 3D distance that gets inflated by however far the entity's Y has drifted from the target's
-stated Y — which corrupts both the "have I arrived" check and the normalized step direction. Do
-the horizontal delta and the vertical (terrain-follow) grounding as two separate concerns.
-
-### The `MoveTo(x, z)` overload (no y given)
-
-This is exactly the loop above — horizontal target, terrain-height-following, straight-line. It
-does **not** avoid obstacles (walls, cliffs it can't climb) — it will walk face-first into a wall
-and keep trying. Always returns `true` once an entity is active (there's no reachability check in
-this overload — see the next section for why).
+`FindGroundY` itself is still used - the `MoveToSlow(x, z, onComplete)`/`MoveToFast(x, z,
+onComplete)` 2-arg pathfinding overloads use it once, up front, to resolve a target Y for a
+caller who only has (x, z) to give (the search itself still runs the full obstacle-aware A*
+afterward; this is just how the destination's Y gets picked, not how the entity moves there).
 
 ### Real pathfinding: the callback-based `MoveTo` overloads
 
-Beyond the straight-line overloads above, `ClientControlledEntity` also exposes real,
-obstacle-aware pathfinding:
+`ClientControlledEntity` exposes real, obstacle-aware pathfinding - the only way to move an
+entity toward a point without already knowing the path there is clear:
 
 ```csharp
 public void MoveToSlow(double x, double z, Action<bool> onComplete);
@@ -339,21 +324,20 @@ private void SetMoving(EnumMoveTier tier)
 
 ## Known limitations (be upfront about these to consumers of this mod)
 
-- **No collision against blocks, real entities, or the player.** These entities never push against
-  the world or anything outside this library - there's no server physics tick driving that. The
-  straight-line `MoveTo`/`MoveToSlow`/`MoveToFast` overloads (without a callback) can walk an
-  entity horizontally into/through a wall visually - there is no horizontal collision check, at
-  any `MovementType`. Vertically, `StepDirectTarget` caps how much a single tick's re-grounding
-  (`FindGroundY`) may rise above the previous tick, so it can't ratchet up an arbitrarily tall
-  wall one step-height at a time the way it could before that cap existed; a normal single-step
-  rise (stairs, small ledges) still works. `MovementType.CanClimb` is not consulted by these
-  overloads at all - it only gates the real pathfinding profiles' vertical-wall-cling neighbors.
-  Entities spawned by this library DO push each other apart (terrain-aware, via `ApplySeparation`)
-  - that push is the one exception, and is scoped to library-owned entities only.
+- **No collision against real entities or the player.** These entities never push against anything
+  outside this library - there's no server physics tick driving that. Entities spawned by this
+  library DO push each other apart (terrain-aware, via `ApplySeparation`) - that's the only
+  collision response that exists, and it's scoped to library-owned entities only.
+- **No collision against blocks beyond what pathfinding itself routes around.** Since the
+  straight-line, non-pathfinding `MoveTo` overloads (no obstacle avoidance, no `MovementType`
+  awareness at all) were removed, `MoveToSlow`/`MoveToFast` (callback) are now the only way to
+  move an entity toward a destination - and both always run the real, capability-aware A* search,
+  so nothing in the public API can walk an entity through solid terrain anymore.
 - **No gravity/falling by itself.** `FindGroundY` re-grounds the entity to the nearest solid
-  surface each step, which *looks* like it respects terrain, but nothing will make the entity fall
-  if you stop calling `MoveTo` while it's over a ledge - it simply stays at its last logical
-  position until told to move again.
+  surface each step it's called for (target-Y resolution, and while following a waypoint's own Y),
+  which *looks* like it respects terrain, but nothing will make the entity fall if you stop
+  commanding movement while it's over a ledge - it simply stays at its last logical position until
+  told to move again.
 - **Multiplayer:** entirely local to one client. If a mod wants something other players can see
   too, this is the wrong tool - that requires a real server-spawned entity.
 - **Depends on undocumented engine internals** (`Vintagestory.Client.NoObf`). Re-verify

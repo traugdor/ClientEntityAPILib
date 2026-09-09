@@ -37,10 +37,6 @@ namespace ClientEntityAILib
         private const float DriftCheckInterval = 1f;
         private const double DriftThreshold = 1.5;
 
-        // Matches GroundWalkingProfile's own vanilla-verified StepHeight default. Caps how much a
-        // single StepDirectTarget tick's FindGroundY result may rise above the previous tick's Y.
-        private const double StepUpHeightLimit = 0.6;
-
         private readonly ICoreClientAPI capi;
         private readonly MovementType movementType;
         private readonly TerrainPreference terrainPreference;
@@ -49,8 +45,6 @@ namespace ClientEntityAILib
 
         private Entity entity;
         private Vec3d logicalPos;
-        private Vec3d moveTarget;
-        private bool hasMoveTarget;
         private EnumMoveTier currentTier = EnumMoveTier.Idle;
         private EnumMoveTier requestedTier = EnumMoveTier.Slow;
         private double currentMoveSpeed;
@@ -128,7 +122,6 @@ namespace ClientEntityAILib
 
             entity = newEntity;
             logicalPos = spawnPos.Clone();
-            hasMoveTarget = false;
             currentTier = EnumMoveTier.Idle;
             activeAnim = null;
             pushAccum = 0f;
@@ -164,48 +157,6 @@ namespace ClientEntityAILib
         public bool SpawnClient(string entityCode, Vec3d spawnPos)
         {
             return SpawnClientCustom(entityCode, spawnPos, new AnimationKeycodes { Idle = "idle", MoveSlow = "walk", MoveFast = "walk" });
-        }
-
-        /// <summary>
-        /// Moves the entity toward (x, z) at the slow tier, following the real terrain surface
-        /// vertically. Alias for MoveToSlow(x, z, y) - see its doc comment. Kept for backward
-        /// compatibility with callers written before MoveToSlow/MoveToFast existed.
-        /// </summary>
-        public bool MoveTo(double x, double z, double? y = null)
-        {
-            return MoveToSlow(x, z, y);
-        }
-
-        /// <summary>
-        /// Moves the entity toward (x, z) at the slow tier, following the real terrain surface
-        /// vertically. If y is given, the target is a full 3D point. Does not avoid obstacles - it
-        /// walks a straight line and will walk into a wall it can't pass. Returns true if an
-        /// entity is active; false otherwise. For real obstacle-avoiding pathfinding, use one of
-        /// the callback-based overloads instead.
-        /// </summary>
-        public bool MoveToSlow(double x, double z, double? y = null)
-        {
-            return MoveToDirect(x, z, y, EnumMoveTier.Slow);
-        }
-
-        /// <summary>Same as MoveToSlow, but at the fast tier. See MoveToSlow's doc comment.</summary>
-        public bool MoveToFast(double x, double z, double? y = null)
-        {
-            return MoveToDirect(x, z, y, EnumMoveTier.Fast);
-        }
-
-        private bool MoveToDirect(double x, double z, double? y, EnumMoveTier tier)
-        {
-            if (entity == null) return false;
-
-            CancelPendingPathfind();
-
-            moveTarget = new Vec3d(x, y ?? logicalPos.Y, z);
-            hasMoveTarget = true;
-            requestedTier = tier;
-            currentMoveSpeed = tier == EnumMoveTier.Fast ? fastSpeed : slowSpeed;
-            lastCommandedDestination = moveTarget.Clone();
-            return true;
         }
 
         /// <summary>
@@ -263,7 +214,6 @@ namespace ClientEntityAILib
             }
 
             CancelPendingPathfind();
-            hasMoveTarget = false;
             pendingCallback = onComplete;
             requestedTier = tier;
             currentMoveSpeed = tier == EnumMoveTier.Fast ? fastSpeed : slowSpeed;
@@ -343,7 +293,6 @@ namespace ClientEntityAILib
             // control returned here.
             Entity entityToRemove = entity;
             entity = null;
-            hasMoveTarget = false;
             currentTier = EnumMoveTier.Idle;
             activeAnim = null;
             lastCommandedDestination = null;
@@ -481,10 +430,6 @@ namespace ClientEntityAILib
             {
                 moving = StepWaypoints(dt, ref yaw);
             }
-            else if (hasMoveTarget)
-            {
-                moving = StepDirectTarget(dt, ref yaw);
-            }
 
             ApplySeparation();
             RunDriftCheck(dt, moving);
@@ -499,59 +444,8 @@ namespace ClientEntityAILib
             }
         }
 
-        // Horizontal-only stepping with terrain-following Y (FindGroundY).
-        private bool StepDirectTarget(float dt, ref float yaw)
-        {
-            // Horizontal delta only - mixing in a non-zero Y here would turn dist into a 3D
-            // distance inflated by however far logicalPos.Y has drifted from the target's Y,
-            // corrupting both the arrival check and the normalized step direction.
-            Vec3d toTarget = new Vec3d(moveTarget.X - logicalPos.X, 0, moveTarget.Z - logicalPos.Z);
-            double dist = toTarget.Length();
-
-            if (dist <= ArriveDistance)
-            {
-                hasMoveTarget = false;
-                return false;
-            }
-
-            double step = Math.Min(currentMoveSpeed * dt, dist);
-            double candidateX = logicalPos.X + toTarget.X / dist * step;
-            double candidateZ = logicalPos.Z + toTarget.Z / dist * step;
-            double candidateY = FindGroundY(capi, candidateX, logicalPos.Y, candidateZ);
-
-            yaw = (float)Math.Atan2(toTarget.X, toTarget.Z);
-
-            // Never step up more than StepUpHeightLimit in a single tick. FindGroundY's own "allow
-            // stepping up slightly" margin is meant for natural single-step terrain (stairs, small
-            // ledges) - but since it's called every tick with the previous tick's own Y fed back as
-            // the next anchor, nothing otherwise stops that margin from reapplying tick after tick,
-            // letting an unobstructed straight-line walk ratchet up an arbitrarily tall wall one
-            // step-height at a time. Falling (a lower candidateY) is always allowed - only an
-            // excessive rise is refused, holding position (still facing/animating toward the
-            // target) rather than climbing.
-            if (candidateY - logicalPos.Y > StepUpHeightLimit)
-            {
-                if (entity is EntityAgent blockedAgent)
-                {
-                    blockedAgent.Controls.WalkVector.Set(toTarget.X / dist * currentMoveSpeed, 0, toTarget.Z / dist * currentMoveSpeed);
-                }
-                return true;
-            }
-
-            logicalPos.X = candidateX;
-            logicalPos.Z = candidateZ;
-            logicalPos.Y = candidateY;
-
-            if (entity is EntityAgent agent)
-            {
-                agent.Controls.WalkVector.Set(toTarget.X / dist * currentMoveSpeed, 0, toTarget.Z / dist * currentMoveSpeed);
-            }
-
-            return true;
-        }
-
         // Full 3D stepping toward the current waypoint - each waypoint already carries its own
-        // valid Y from the search, so (unlike StepDirectTarget) this doesn't re-derive Y via
+        // valid Y from the search, so this doesn't re-derive Y via
         // FindGroundY, which would be wrong for a flown/swum path or a ground path mid step-up/fall.
         private bool StepWaypoints(float dt, ref float yaw)
         {

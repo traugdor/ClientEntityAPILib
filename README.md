@@ -87,11 +87,6 @@ public class ClientControlledEntity : IDisposable
     public bool SpawnClient(string entityCode, Vec3d spawnPos);
     public bool SpawnClientCustom(string entityCode, Vec3d spawnPos, AnimationKeycodes animKeycodes);
 
-    // Straight-line, terrain-following - no obstacle avoidance.
-    public bool MoveTo(double x, double z, double? y = null);      // alias for MoveToSlow
-    public bool MoveToSlow(double x, double z, double? y = null);
-    public bool MoveToFast(double x, double z, double? y = null);
-
     // Real, obstacle-aware pathfinding - runs on a background thread, callback fires on arrival/failure.
     public void MoveToSlow(double x, double z, Action<bool> onComplete);
     public void MoveToFast(double x, double z, Action<bool> onComplete);
