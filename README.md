@@ -85,13 +85,17 @@ public class ClientControlledEntity : IDisposable
     public ClientControlledEntity(ICoreClientAPI capi, MovementType movementType, TerrainPreference terrainPreference = TerrainPreference.Both, int? pathfindingSearchDepth = null);
 
     public bool SpawnClient(string entityCode, Vec3d spawnPos);
-    public bool SpawnClientCustom(string entityCode, Vec3d spawnPos, AnimationKeycodes animKeycodes);
+    public bool SpawnClientCustom(string entityCode, Vec3d spawnPos, AnimationKeycodes animKeycodes, bool startHidden = false);
 
     // Real, obstacle-aware pathfinding - runs on a background thread, callback fires on arrival/failure.
     public void MoveToSlow(double x, double z, Action<bool> onComplete);
     public void MoveToFast(double x, double z, Action<bool> onComplete);
     public void MoveToSlow(double x, double z, double y, Action<bool> onComplete);
     public void MoveToFast(double x, double z, double y, Action<bool> onComplete);
+
+    // Instant relocation - skips pathfinding entirely, no route searched, no obstacle check.
+    public void Teleport(double x, double z);
+    public void Teleport(double x, double z, double y);
 
     // Generic, entity-agnostic building blocks for a caller's own AI logic - this library has no
     // built-in concept of "attack" or "in range"; these just play whatever animation and report
@@ -100,6 +104,11 @@ public class ClientControlledEntity : IDisposable
     public Vec3d GetPosition();
     public double DistanceTo(double x, double y, double z);
     public bool PlaySound(string soundLocation, bool relativeToEntity = true, SoundDirection direction = SoundDirection.Front, double distance = 0, double heightOffset = 0, bool randomizePitch = true, float range = 32f, float volume = 1f);
+
+    // Toggle visibility without despawning - movement/pathfinding keep running while hidden.
+    public void Hide();
+    public void Show();
+    public bool IsHidden();
 
     public void Despawn();
 }
@@ -123,6 +132,12 @@ public class AnimationKeycodes
 - **`TerrainPreference`** only matters when `MovementType` makes more than one terrain type legal —
   it biases pathfinding cost toward `Water` or `Land` when a comparable route through either
   exists; `Both` (the default) is unbiased.
+- **`Teleport`** instantly relocates the entity, skipping pathfinding entirely — no route searched,
+  no obstacle check made, no walking animation. It cancels any in-progress `MoveToSlow`/`MoveToFast`
+  call with no callback (same "a superseded call gets no callback" rule as calling a new `MoveTo*`),
+  since the old destination no longer applies once the entity's been moved elsewhere. The 2-arg
+  overload auto-resolves Y from the terrain at that column, same as `MoveToSlow`/`MoveToFast`'s
+  `(x, z)` overloads.
 - **Speeds** for `MoveToSlow`/`MoveToFast` are derived automatically from the spawned entity's own
   AI-task JSON where present, falling back to fixed defaults otherwise — no configuration needed.
   If the entity's JSON has no matching `wander`/`seekentity` movement tasks to derive a speed from
@@ -152,6 +167,13 @@ public class AnimationKeycodes
   `PlaySound("game:creature/drifter/hurt", relativeToEntity: false, direction: SoundDirection.Back, distance: 5)`
   plays a sound 5 blocks behind wherever the player is currently facing, regardless of where the
   entity actually is. `distance: 0` (the default) means no offset at all — just play at the anchor.
+- **`Hide`/`Show`/`IsHidden`/`startHidden`** let an entity exist and keep ticking without being
+  drawn — useful for e.g. spawning ahead of time and revealing on a trigger. Movement, pathfinding,
+  and position/rotation smoothing all keep running while hidden exactly as if shown. Animation pose
+  advancement does not — the engine only advances an entity's animator when it has a renderer, so
+  whatever animation is active when `Hide()` is called stays frozen on that pose until `Show()`
+  brings it back; it isn't lost or reset, just paused. `SpawnClientCustom(..., startHidden: true)`
+  spawns already hidden.
 
 See `docs/design-notes.md` for implementation details, verification notes against the decompiled
 game source, and known limitations.

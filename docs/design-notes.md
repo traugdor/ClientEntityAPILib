@@ -336,6 +336,93 @@ Each `SoundDirection` value is a fixed 45°-step angle added to that yaw before 
 offset out; `GameMath.PIHALF`/`GameMath.PI` (`Vintagestory.API.MathTools`) are the real, verified
 constants used for those steps, not hand-rolled numeric literals.
 
+## Part 6: `Hide`/`Show`/`startHidden`
+
+Verified against the decompiled client source that the entity-loaded pipeline and the per-frame
+renderer dictionary are two separate things, not one shared registration point:
+
+- `TriggerEntityLoaded` (`ClientEventManager.cs`) just fans out to every subscriber of the public
+  `OnEntityLoaded` event. `ClientSystemEntities` is one such subscriber — its handler
+  (`OnEntitySpawnOrLoaded`) is what actually builds the `EntityRenderer` and adds it to
+  `game.EntityRenderers`, an `internal` dictionary keyed by entity ID (inaccessible directly from a
+  mod assembly — `RemoveEntityRenderer`, used below, is the public wrapper around removing from it).
+- `EntityBehaviorInterpolatePosition` registers its own per-frame hook
+  (`capi.Event.RegisterRenderer(this, EnumRenderStage.Before, "interpolateposition")`) in its
+  **constructor**, entirely independent of `TriggerEntityLoaded`/`game.EntityRenderers`. So removing
+  an entity's renderer does not touch position/rotation interpolation at all.
+- Animation pose advancement is a third, separate thing again: `SystemRenderEntities.OnBeforeRender`
+  (`Vintagestory.Client.NoObf`) is what actually calls `entity.AnimManager.OnClientFrame(dt)` each
+  frame, and it iterates `game.EntityRenderers` — not `LoadedEntities`. An entity with no renderer
+  entry never gets its animator advanced.
+
+```csharp
+public void Hide()
+{
+    if (entity == null || isHidden) return;
+    isHidden = true;
+    ((ClientMain)capi.World).RemoveEntityRenderer(entity); // public method, same one Despawn() uses
+}
+
+public void Show()
+{
+    if (entity == null || !isHidden) return;
+    isHidden = false;
+    // No public API rebuilds a single entity's renderer directly - re-firing the same event
+    // SpawnClientCustom uses to build it the first time is the only sanctioned path back.
+    ((ClientMain)capi.World).eventManager.TriggerEntityLoaded(entity);
+}
+```
+
+Net effect: while hidden, movement, pathfinding, `ApplySeparation`, drift recovery, and position/
+rotation interpolation all keep running exactly as if shown — none of them touch
+`game.EntityRenderers`. Animation pose advancement pauses — `PlayOneShotAnimation`/movement-tier
+animation calls still succeed and mark an animation active, but it won't visibly progress until
+`Show()` is called again, at which point it resumes from wherever it was rather than restarting.
+
+Re-firing `TriggerEntityLoaded` for `Show()` re-fires the public `OnEntityLoaded` event for that
+entity a second time. Checked against the one other shipped subscriber besides
+`ClientSystemEntities` itself, `EntityMapLayer` (world-map creature markers) — its handler is
+guarded by `!mapComps.ContainsKey(entity.EntityId)`, so this is safe/idempotent against it. A
+third-party mod's own `capi.Event.OnEntityLoaded` handler could in principle not be similarly
+idempotent, but this library's fake entities already fire that event once via `SpawnClientCustom`
+to begin with — this is an inherent characteristic of reusing the client's real load pipeline for a
+synthetic entity, not something new introduced by `Hide`/`Show`.
+
+## Part 7: `Teleport`
+
+Instant relocation, no pathfinding involved. Reuses the same "feed `OnReceivedServerPos`" mechanism
+as normal movement (see "The interpolation trap" above), but with `isTeleport: true` instead of
+`false`:
+
+```csharp
+private void PushPosition(float yaw, bool isTeleport = false)
+{
+    entity.Pos.SetPos(logicalPos);
+    entity.Pos.Yaw = yaw;
+    if (entity is EntityAgent agent) agent.BodyYawServer = yaw;
+
+    EnumHandling handling = EnumHandling.PassThrough;
+    var interp = entity.GetBehavior<EntityBehaviorInterpolatePosition>();
+    interp?.OnReceivedServerPos(isTeleport, ref handling);
+}
+```
+
+`EntityBehaviorInterpolatePosition.OnReceivedServerPos`'s `isTeleport` branch (see the decompiled
+source) clears its internal position queue and snaps both position and rotation state to the new
+values immediately, instead of queuing a `PositionSnapshot` to be smoothly interpolated toward over
+the next several calls like a normal movement update would. Without `isTeleport: true`, a long-
+distance `Teleport` would visibly slide the entity across the map over the following ~1-2 seconds of
+`PushPosition` calls rather than relocating it instantly - exactly the failure mode the normal
+movement code already carefully avoids via the *opposite* choice (`isTeleport: false`, so a real
+walk still looks smooth).
+
+`Teleport` cancels any in-progress `MoveToSlow`/`MoveToFast` call via the same
+`CancelPendingPathfind` used when a new `MoveTo*` call supersedes an older one - the pending
+callback, if any, is dropped with no invocation, matching this library's existing "a superseded call
+gets no callback" contract elsewhere. This also resets `lastCommandedDestination`, so the idle drift
+check (see `RunDriftCheck` in "Lifecycle" area of the code) doesn't immediately try to path the
+entity back toward wherever it was headed before the teleport.
+
 ## Lifecycle
 
 - One `ClientControlledEntity` = one live client entity at a time. `SpawnClient` fails (`false`)
@@ -366,6 +453,9 @@ constants used for those steps, not hand-rolled numeric literals.
   too, this is the wrong tool - that requires a real server-spawned entity.
 - **Depends on undocumented engine internals** (`Vintagestory.Client.NoObf`). Re-verify
   `ClientMain`/`ClientEventManager`'s shape after any game update before shipping an update.
+- **Animation pauses while hidden.** See "Part 6" above — a hidden entity's animator simply doesn't
+  advance; this is an engine constraint (animation ticking is gated on having a renderer), not
+  something this library chooses or can change.
 
 ## Open research items (not solved in this document — investigate in the new session)
 

@@ -63,6 +63,7 @@ namespace ClientEntityAILib
 
         private Vec3d lastCommandedDestination;
         private float driftCheckAccum;
+        private bool isHidden;
 
         /// <param name="movementType">
         /// Required - what this entity can physically do. A hard legality gate, not a preference:
@@ -101,9 +102,11 @@ namespace ClientEntityAILib
         /// its idle/slow-move/fast-move states. Returns true if the entity type was found and the
         /// entity was created and rendered successfully; false otherwise (bad entity code, or this
         /// instance already has an active entity - call Despawn first to reuse the handle).
-        /// animKeycodes.MoveFast falls back to MoveSlow's code when left null/empty.
+        /// animKeycodes.MoveFast falls back to MoveSlow's code when left null/empty. When
+        /// startHidden is true, the entity spawns invisible (see Hide()) - it still ticks, moves,
+        /// and pathfinds, but nothing is drawn until Show() is called.
         /// </summary>
-        public bool SpawnClientCustom(string entityCode, Vec3d spawnPos, AnimationKeycodes animKeycodes)
+        public bool SpawnClientCustom(string entityCode, Vec3d spawnPos, AnimationKeycodes animKeycodes, bool startHidden = false)
         {
             if (entity != null) return false;
 
@@ -130,6 +133,7 @@ namespace ClientEntityAILib
             pendingCallback = null;
             lastCommandedDestination = null;
             driftCheckAccum = 0f;
+            isHidden = false;
 
             (double derivedSlow, double derivedFast) = EntitySpeedDerivation.Derive(props);
             slowSpeed = derivedSlow;
@@ -145,6 +149,8 @@ namespace ClientEntityAILib
             activeHandles.Add(this);
 
             tickListenerId = capi.Event.RegisterGameTickListener(OnGameTick, 30);
+
+            if (startHidden) HideCore();
 
             return true;
         }
@@ -296,6 +302,7 @@ namespace ClientEntityAILib
             currentTier = EnumMoveTier.Idle;
             activeAnim = null;
             lastCommandedDestination = null;
+            isHidden = false;
 
             moveGeneration++;
             activeWaypoints = null;
@@ -325,6 +332,48 @@ namespace ClientEntityAILib
         public void Dispose()
         {
             Despawn();
+        }
+
+        /// <summary>
+        /// Makes the entity invisible without despawning it: movement, pathfinding, and position/
+        /// rotation smoothing all keep running exactly as if it were shown. Animation pose
+        /// advancement does not - the engine only advances an entity's animator for entities that
+        /// have a renderer, so whatever animation is active at the moment of Hide() stays frozen on
+        /// that pose (still marked active, just not progressing) until Show() is called again. A
+        /// no-op if no entity is active or it's already hidden.
+        /// </summary>
+        public void Hide()
+        {
+            if (entity == null || isHidden) return;
+            HideCore();
+        }
+
+        /// <summary>
+        /// Reveals an entity previously hidden via Hide() or startHidden. A no-op if no entity is
+        /// active or it's already visible.
+        /// </summary>
+        public void Show()
+        {
+            if (entity == null || !isHidden) return;
+            isHidden = false;
+
+            // No public API rebuilds a single entity's renderer directly - re-firing the same
+            // event SpawnClientCustom uses to build it the first time is the sanctioned path back.
+            ClientMain game = (ClientMain)capi.World;
+            game.eventManager.TriggerEntityLoaded(entity);
+        }
+
+        /// <summary>Whether the entity is currently hidden. False if no entity is active.</summary>
+        public bool IsHidden()
+        {
+            return entity != null && isHidden;
+        }
+
+        private void HideCore()
+        {
+            isHidden = true;
+            ClientMain game = (ClientMain)capi.World;
+            game.RemoveEntityRenderer(entity);
         }
 
         /// <summary>
@@ -470,6 +519,43 @@ namespace ClientEntityAILib
             double dy = logicalPos.Y - y;
             double dz = logicalPos.Z - z;
             return Math.Sqrt(dx * dx + dy * dy + dz * dz);
+        }
+
+        /// <summary>
+        /// Instantly relocates the entity to (x, z), skipping pathfinding entirely - no route is
+        /// searched, no obstacle check is made, and the entity does not walk there. The target Y is
+        /// auto-resolved from the terrain at that column, same as MoveToSlow/MoveToFast's (x, z)
+        /// overloads. Cancels any in-progress MoveToSlow/MoveToFast call with no callback, per this
+        /// library's documented "a superseded call gets no callback" contract - the old destination
+        /// no longer makes sense once the entity has been moved elsewhere by other means. A no-op if
+        /// no entity is active.
+        /// </summary>
+        public void Teleport(double x, double z)
+        {
+            if (entity == null) return;
+            TeleportCore(x, FindGroundY(capi, x, logicalPos.Y, z), z);
+        }
+
+        /// <summary>Same as Teleport(x, z), but to the exact 3D point (x, y, z). See that overload's doc comment.</summary>
+        public void Teleport(double x, double z, double y)
+        {
+            if (entity == null) return;
+            TeleportCore(x, y, z);
+        }
+
+        private void TeleportCore(double x, double y, double z)
+        {
+            CancelPendingPathfind();
+            lastCommandedDestination = null;
+            driftCheckAccum = 0f;
+
+            logicalPos.Set(x, y, z);
+            pushAccum = 0f;
+
+            // isTeleport: true clears EntityBehaviorInterpolatePosition's queue and snaps instantly
+            // instead of smoothly sliding there over the next several PushPosition calls, the same
+            // way a real server-side teleport is handled.
+            PushPosition(entity.Pos.Yaw, isTeleport: true);
         }
 
         // Cancels whatever the previous MoveTo call was doing (waypoint-following or a background
@@ -632,7 +718,7 @@ namespace ClientEntityAILib
         // would. Writing Pos.Yaw/Pos.SetPos directly every frame doesn't work: this behavior runs
         // at EnumRenderStage.Before, ahead of everything else, and silently overwrites both toward
         // whatever OnReceivedServerPos was last given.
-        private void PushPosition(float yaw)
+        private void PushPosition(float yaw, bool isTeleport = false)
         {
             entity.Pos.SetPos(logicalPos);
             entity.Pos.Yaw = yaw;
@@ -640,7 +726,7 @@ namespace ClientEntityAILib
 
             EnumHandling handling = EnumHandling.PassThrough;
             EntityBehaviorInterpolatePosition interp = entity.GetBehavior<EntityBehaviorInterpolatePosition>();
-            interp?.OnReceivedServerPos(isTeleport: false, ref handling);
+            interp?.OnReceivedServerPos(isTeleport, ref handling);
         }
 
         private void SetMoving(EnumMoveTier tier)
