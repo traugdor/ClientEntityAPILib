@@ -67,7 +67,7 @@ namespace ClientEntityAILib.Pathfinding
                 {
                     float extraCost = 0f;
                     PathNode existingNeighbourNode = openSet.TryFindValue(neighbourNode);
-                    if (existingNeighbourNode != null)
+                    if (!(existingNeighbourNode is null)) // "is null", not "!= null" - PathNode's own operator== NREs on a null right-hand side
                     {
                         float baseCostToNeighbour = nearestNode.gCost + nearestNode.distanceTo(neighbourNode);
                         if (existingNeighbourNode.gCost > baseCostToNeighbour + 0.0001f

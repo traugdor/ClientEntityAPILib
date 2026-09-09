@@ -142,7 +142,11 @@ public class AnimationKeycodes
   on your own timer. `GetPosition()` returns the real (`logicalPos`) position, not `entity.Pos`,
   which becomes a smoothed/lagging value once movement starts — reading `entity.Pos` directly (or
   calling `AnimManager` yourself) would get stale answers or fight this library's own bookkeeping,
-  which is why the `Entity` object itself isn't exposed.
+  which is why the `Entity` object itself isn't exposed. `PlayOneShotAnimation` works for any real
+  animation clip regardless of whether the entity's own JSON happened to also expose it as a named
+  `client.animations` code (many don't — e.g. the real drifter's `"standattack"` is only ever
+  played by its own AI task constructing the animation data directly, the same fallback this
+  method uses).
 
 See `docs/design-notes.md` for implementation details, verification notes against the decompiled
 game source, and known limitations.

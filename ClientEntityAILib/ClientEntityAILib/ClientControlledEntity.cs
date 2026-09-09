@@ -385,9 +385,15 @@ namespace ClientEntityAILib
         /// while this is playing (e.g. triggered mid-stride without ever stopping), it is not
         /// self-healing - this is meant for the stop-act-resume pattern, not a mid-movement
         /// interrupt. Returns true if an entity is active and AnimManager accepted the animation
-        /// code; false if no entity is active, animationCode is null/empty, or the code wasn't
-        /// recognized (AnimManager.StartAnimation no-ops rather than throwing, so an unrecognized
-        /// code is safe regardless of the spawned entity type).
+        /// code; false if no entity is active or animationCode is null/empty.
+        ///
+        /// Tries AnimManager.StartAnimation(string) first, which only succeeds for a name declared
+        /// as a client.animations config code on the entity. Many real animation clips are never
+        /// given one - e.g. the real drifter's "standattack" exists only inside its meleeattack AI
+        /// task's own config, not in client.animations - and are normally reached by vanilla's own
+        /// AI tasks constructing an AnimationMetaData directly (AiTaskBaseConfig.Init()). This
+        /// falls back to the same technique, so any real animation name works regardless of
+        /// whether the entity's JSON happened to also expose it as a named code.
         /// </summary>
         public bool PlayOneShotAnimation(string animationCode)
         {
@@ -400,6 +406,19 @@ namespace ClientEntityAILib
             }
 
             if (entity.AnimManager.StartAnimation(animationCode))
+            {
+                activeAnim = animationCode;
+                return true;
+            }
+
+            AnimationMetaData fallbackMeta = new AnimationMetaData
+            {
+                Code = animationCode,
+                Animation = animationCode,
+                AnimationSpeed = 1f
+            }.Init();
+
+            if (entity.AnimManager.StartAnimation(fallbackMeta))
             {
                 activeAnim = animationCode;
                 return true;
